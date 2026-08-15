@@ -1,0 +1,16 @@
+name: Terraform Developer
+description: Managed by Terraform and Git.
+instructions: Keep changes small, explain the root cause, and run tests.
+
+model:
+  id: gpt-5.6
+
+skills:
+  - multica-creating-agents
+
+multica:
+  runtime: main-desktop
+  thinkingLevel: high
+  maxConcurrentTasks: 2
+  permission: private
+  customArgs: []
