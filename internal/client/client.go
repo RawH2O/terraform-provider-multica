@@ -54,9 +54,32 @@ type Runtime struct {
 }
 
 type Skill struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID          string      `json:"id"`
+	WorkspaceID string      `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Content     string      `json:"content"`
+	Config      any         `json:"config"`
+	Files       []SkillFile `json:"files,omitempty"`
+}
+
+type SkillFile struct {
+	ID        string `json:"id"`
+	SkillID   string `json:"skill_id"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type SkillImportResult struct {
+	Status        string `json:"status"`
+	Reason        string `json:"reason,omitempty"`
+	Skill         *Skill `json:"skill,omitempty"`
+	ExistingSkill *struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"existing_skill,omitempty"`
 }
 
 type InvocationTarget struct {
@@ -98,10 +121,93 @@ func (c *Client) ListRuntimes(ctx context.Context) ([]Runtime, error) {
 	return result, err
 }
 
+func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
+	var result []Agent
+	err := c.get(ctx, "/api/agents?include_archived=true", &result)
+	return result, err
+}
+
 func (c *Client) ListSkills(ctx context.Context) ([]Skill, error) {
 	var result []Skill
 	err := c.get(ctx, "/api/skills", &result)
 	return result, err
+}
+
+func (c *Client) GetSkill(ctx context.Context, id string) (Skill, error) {
+	var result Skill
+	err := c.get(ctx, "/api/skills/"+url.PathEscape(id), &result)
+	return result, err
+}
+
+func (c *Client) CreateSkill(ctx context.Context, body map[string]any) (Skill, error) {
+	var result Skill
+	err := c.post(ctx, "/api/skills", body, &result)
+	return result, err
+}
+
+func (c *Client) UpdateSkill(ctx context.Context, id string, body map[string]any) (Skill, error) {
+	var result Skill
+	err := c.put(ctx, "/api/skills/"+url.PathEscape(id), body, &result)
+	return result, err
+}
+
+func (c *Client) DeleteSkill(ctx context.Context, id string) error {
+	return c.delete(ctx, "/api/skills/"+url.PathEscape(id))
+}
+
+func (c *Client) ImportSkill(ctx context.Context, sourceURL, onConflict string) (SkillImportResult, error) {
+	var result SkillImportResult
+	err := c.post(ctx, "/api/skills/import", map[string]any{
+		"url":         sourceURL,
+		"on_conflict": onConflict,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) ListSkillFiles(ctx context.Context, skillID string) ([]SkillFile, error) {
+	var result []SkillFile
+	err := c.get(ctx, "/api/skills/"+url.PathEscape(skillID)+"/files", &result)
+	return result, err
+}
+
+func (c *Client) UpsertSkillFile(ctx context.Context, skillID string, path, content string) (SkillFile, error) {
+	var result SkillFile
+	err := c.put(ctx, "/api/skills/"+url.PathEscape(skillID)+"/files", map[string]any{
+		"path": path, "content": content,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) DeleteSkillFile(ctx context.Context, skillID, fileID string) error {
+	return c.delete(ctx, "/api/skills/"+url.PathEscape(skillID)+"/files/"+url.PathEscape(fileID))
+}
+
+// The squad and autopilot APIs have evolved additively and expose a few
+// server-computed fields. Keep their provider transport deliberately generic
+// so the provider can preserve declarative config without coupling the client
+// to every UI-only response field.
+func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
+	return c.get(ctx, path, out)
+}
+
+func (c *Client) PostJSON(ctx context.Context, path string, body, out any) error {
+	return c.post(ctx, path, body, out)
+}
+
+func (c *Client) PatchJSON(ctx context.Context, path string, body, out any) error {
+	return c.patch(ctx, path, body, out)
+}
+
+func (c *Client) PutJSON(ctx context.Context, path string, body, out any) error {
+	return c.put(ctx, path, body, out)
+}
+
+func (c *Client) DeleteJSON(ctx context.Context, path string) error {
+	return c.delete(ctx, path)
+}
+
+func (c *Client) DeleteJSONWithBody(ctx context.Context, path string, body any) error {
+	return c.do(ctx, http.MethodDelete, path, body, nil)
 }
 
 func (c *Client) GetAgent(ctx context.Context, id string) (Agent, error) {
@@ -180,6 +286,14 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 
 func (c *Client) put(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPut, path, body, out)
+}
+
+func (c *Client) patch(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPatch, path, body, out)
+}
+
+func (c *Client) delete(ctx context.Context, path string) error {
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

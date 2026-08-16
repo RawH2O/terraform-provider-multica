@@ -56,3 +56,60 @@ func TestGetAgentReturnsStructuredHTTPError(t *testing.T) {
 		t.Fatalf("HTTP error = %+v", httpErr)
 	}
 }
+
+func TestImportSkillSendsConflictPolicyAndDecodesResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/skills/import" {
+			t.Fatalf("request = %s %s, want POST /api/skills/import", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["url"] != "https://skills.sh/acme/review" || body["on_conflict"] != "skip" {
+			t.Fatalf("body = %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(SkillImportResult{
+			Status: "skipped",
+			ExistingSkill: &struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			}{ID: "skill-1", Name: "review"},
+		})
+	}))
+	defer server.Close()
+
+	result, err := New(server.URL, "token", "workspace", nil).ImportSkill(context.Background(), "https://skills.sh/acme/review", "skip")
+	if err != nil {
+		t.Fatalf("ImportSkill() error = %v", err)
+	}
+	if result.Status != "skipped" || result.ExistingSkill == nil || result.ExistingSkill.ID != "skill-1" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestDeleteJSONWithBodySendsJSONPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/squads/squad-1/members" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["member_type"] != "agent" || body["member_id"] != "agent-1" {
+			t.Fatalf("body = %#v", body)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	err := New(server.URL, "token", "workspace", nil).DeleteJSONWithBody(context.Background(), "/api/squads/squad-1/members", map[string]string{
+		"member_type": "agent",
+		"member_id":   "agent-1",
+	})
+	if err != nil {
+		t.Fatalf("DeleteJSONWithBody() error = %v", err)
+	}
+}

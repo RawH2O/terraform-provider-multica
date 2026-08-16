@@ -432,17 +432,54 @@ func (r *agentResource) resolveSkills(ctx context.Context, values types.Set) ([]
 	for _, ref := range refs {
 		found := ""
 		for _, skill := range skills {
-			if skill.ID == ref || skill.Name == ref {
+			if skill.ID == ref || skill.Name == ref || skillSourceURL(skill) == ref {
 				found = skill.ID
 				break
 			}
 		}
 		if found == "" {
-			return nil, fmt.Errorf("skill %q was not found in the workspace", ref)
+			if !isRemoteSkillReference(ref) {
+				return nil, fmt.Errorf("skill %q was not found in the workspace", ref)
+			}
+
+			imported, err := r.client.ImportSkill(ctx, ref, "skip")
+			if err != nil {
+				return nil, fmt.Errorf("import skill %q: %w", ref, err)
+			}
+			if imported.Skill != nil {
+				found = imported.Skill.ID
+			} else if imported.ExistingSkill != nil {
+				found = imported.ExistingSkill.ID
+			}
+			if found == "" {
+				return nil, fmt.Errorf("import skill %q returned no skill ID", ref)
+			}
 		}
 		ids = append(ids, found)
 	}
 	return ids, nil
+}
+
+func isRemoteSkillReference(value string) bool {
+	return strings.HasPrefix(value, "https://github.com/") ||
+		strings.HasPrefix(value, "github.com/") ||
+		strings.HasPrefix(value, "https://skills.sh/") ||
+		strings.HasPrefix(value, "skills.sh/") ||
+		strings.HasPrefix(value, "https://clawhub.ai/") ||
+		strings.HasPrefix(value, "clawhub.ai/")
+}
+
+func skillSourceURL(skill client.Skill) string {
+	config, ok := skill.Config.(map[string]any)
+	if !ok {
+		return ""
+	}
+	origin, ok := config["origin"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	sourceURL, _ := origin["source_url"].(string)
+	return sourceURL
 }
 
 func stateConfigFromAgent(current agentConfigModel, agent client.Agent) agentConfigModel {
@@ -484,6 +521,39 @@ func skillNames(skills []client.Skill) []string {
 		if skill.Name != "" {
 			result = append(result, skill.Name)
 		} else {
+			result = append(result, skill.ID)
+		}
+	}
+	return result
+}
+
+func preserveSkillRefs(configured any, skills []client.Skill) []string {
+	refs, _ := configured.([]any)
+	result := make([]string, 0, len(skills))
+	matched := make(map[int]bool, len(skills))
+	for _, raw := range refs {
+		ref, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		for index, skill := range skills {
+			if matched[index] {
+				continue
+			}
+			if skill.ID == ref || skill.Name == ref || skillSourceURL(skill) == ref {
+				result = append(result, ref)
+				matched[index] = true
+				break
+			}
+		}
+	}
+	for index, skill := range skills {
+		if matched[index] {
+			continue
+		}
+		if skill.Name != "" {
+			result = append(result, skill.Name)
+		} else if skill.ID != "" {
 			result = append(result, skill.ID)
 		}
 	}
