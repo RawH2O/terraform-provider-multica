@@ -1,8 +1,11 @@
 # Terraform Provider for Multica
 
-This is the first provider slice for managing Multica agents as Terraform
-resources. The resource accepts the `multica-declarative` agent YAML shape via
-Terraform's `yamldecode`, then calls the Multica API directly.
+This provider manages Multica configuration through Terraform while keeping
+the YAML shape used by `multica-declarative` and the existing GitOps
+repository. Terraform owns the plan, diff, state, and apply workflow; the
+provider only translates resources to the Multica API.
+
+## Provider configuration
 
 ```hcl
 terraform {
@@ -14,59 +17,120 @@ terraform {
 }
 
 provider "multica" {
-  # These may also be supplied by MULTICA_SERVER_URL,
-  # MULTICA_API_TOKEN and MULTICA_WORKSPACE_ID.
   server_url   = var.multica_server_url
   token        = var.multica_api_token
   workspace_id = var.multica_workspace_id
 }
+```
 
+The three provider arguments can also be supplied with
+`MULTICA_SERVER_URL`, `MULTICA_API_TOKEN`, and `MULTICA_WORKSPACE_ID`.
+
+## Supported resources
+
+### `multica_agent`
+
+The agent resource accepts the declarative agent object directly:
+
+```hcl
 resource "multica_agent" "developer" {
   config = yamldecode(file("${path.root}/agents/developer/agent.yaml"))
 }
 ```
 
-The declaration can use the community format:
+The following existing fields are translated to the agent API: runtime
+selectors, model, instructions or `instructionsFile`, skills, runtime config,
+permissions, custom arguments, MCP configuration files, custom environment
+files, Composio allowlists, and archive state. A remote skill URL in `skills`
+is imported once with conflict policy `skip` and then attached by ID.
 
-```yaml
-name: Unity Developer
-description: Implements Unity tasks.
-instructions: Follow the repository conventions.
+### `multica_skill`
 
-model:
-  id: gpt-5.6
+Local skills, including supporting files, can be managed in Terraform:
 
-skills:
-  - unity-development
+```hcl
+resource "multica_skill" "review" {
+  name        = "review"
+  description = "Review changes before merge."
+  content     = file("${path.root}/skills/review/SKILL.md")
 
-multica:
-  runtime: main-desktop
-  runtimeConfig:
-    sandbox: strict
-  thinkingLevel: high
-  maxConcurrentTasks: 1
-  permission: private
-  customArgs: []
+  files = [{
+    path    = "references/checklist.md"
+    content = file("${path.root}/skills/review/references/checklist.md")
+  }]
+}
 ```
 
-The first slice implements create, read, update, archive-on-delete, import, runtime
-resolution, skill binding, invocation permissions, custom environment files, MCP
-configuration files, and the Composio allowlist. The provider uses the dedicated
-`/env` endpoint for environment changes and never sends `custom_env` through the
-generic agent update endpoint. A computed `content_hash` includes the declaration
-and referenced file contents, so editing an instruction/env/MCP file participates in
-the Terraform plan.
+For a community skill, use `source_url` instead of `content`; create imports
+it and update refreshes it with conflict policy `overwrite`:
 
-Secret-bearing values must use `customEnvFile` and `mcpConfigFile`. Inline
-`customEnv` and `mcpConfig` are rejected so plaintext secrets are not copied into
-Terraform state. File paths are currently resolved relative to Terraform's working
-directory; use a root-relative path in the decoded YAML when the YAML file lives in
-a nested agent directory.
+```hcl
+resource "multica_skill" "github_review" {
+  name       = "github-review"
+  source_url = "https://github.com/example/skills/tree/main/github-review"
+}
+```
 
-`avatarFile` and `disabledRuntimeSkills` are recognized as community fields but are
-explicitly rejected for now because the current provider slice has no faithful API
-mutation for them. Skills must already exist in the workspace; creating skills is
-the next resource slice.
+`SKILL.md` is represented by `content` and must not be repeated in `files`.
+The resource also preserves API `config`, including the import origin.
+
+### `multica_squad`
+
+Squads use the declarative YAML object as the Terraform value:
+
+```hcl
+resource "multica_squad" "research" {
+  config = yamldecode(file("${path.root}/squads/research-team/squad.yaml"))
+}
+```
+
+Supported fields include `name`, `leader`, `purpose`/`description`,
+`instructions` or `description_file`, `avatar_url`, `status`, and agent/member
+membership with roles. Agent references may be either IDs or names. `DELETE`
+follows the Multica squad API and archives the squad.
+
+### `multica_autopilot`
+
+Autopilots and their triggers are managed as one declarative object:
+
+```hcl
+resource "multica_autopilot" "market_close" {
+  config = yamldecode(file("${path.root}/autopilots/market-close/autopilot.yaml"))
+}
+```
+
+Supported fields include `title`, `agent`/`assignee`, `mode`, `description` or
+`description_file`, `project`/`project_id`, `status`,
+`issue_title_template`, subscribers, and schedule/webhook triggers. A project
+or agent can be written as its UUID or its workspace name. Trigger `label` is
+used as the stable identity during updates; unlabeled triggers use kind,
+cron, and timezone.
+
+The current Multica autopilot API does not persist the old declarative
+`priority` field. Values other than `none` are rejected rather than silently
+ignored. Squad member `responsibility` and display-only fields are preserved
+in Git but are not sent to an API endpoint that can persist them yet.
+
+## State and secrets
+
+The agent, squad, and autopilot resources expose a computed `content_hash`;
+changing YAML or a referenced file therefore participates in the Terraform
+plan. Use relative paths from the Terraform working directory for
+`instructionsFile`,
+`description_file`, `customEnvFile`, and `mcpConfigFile`.
+
+Secret-bearing agent values must use `customEnvFile` and `mcpConfigFile`.
+Inline `customEnv` and `mcpConfig` are rejected so plaintext secrets do not
+enter Terraform state.
+
+Import an existing API object with its UUID, then let the first refresh
+populate the dynamic config:
+
+```bash
+terraform import multica_skill.review <skill-uuid>
+terraform import multica_squad.research <squad-uuid>
+terraform import multica_autopilot.market_close <autopilot-uuid>
+```
 
 ## Local verification
 

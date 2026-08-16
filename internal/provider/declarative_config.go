@@ -649,7 +649,7 @@ func mergeDeclarativeState(ctx context.Context, state types.Dynamic, agent clien
 		root["model"] = agent.Model
 	}
 	if _, exists := root["skills"]; exists {
-		root["skills"] = skillNames(agent.Skills)
+		root["skills"] = preserveSkillRefs(root["skills"], agent.Skills)
 	}
 	multica, ok := root["multica"].(map[string]any)
 	if !ok {
@@ -730,6 +730,7 @@ func declarativeContentHash(value types.Dynamic) (string, error) {
 		path string
 	}{
 		{"instructionsFile", stringFromAny(root["instructionsFile"])},
+		{"description_file", stringFromAny(root["description_file"])},
 		{"customEnvFile", stringFromAny(multica["customEnvFile"])},
 		{"mcpConfigFile", stringFromAny(multica["mcpConfigFile"])},
 		{"avatarFile", stringFromAny(multica["avatarFile"])},
