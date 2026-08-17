@@ -456,22 +456,10 @@ func (r *agentResource) resolveSkills(ctx context.Context, values types.Set) ([]
 			}
 		}
 		if found == "" {
-			if !isRemoteSkillReference(ref) {
-				return nil, fmt.Errorf("skill %q was not found in the workspace", ref)
+			if isRemoteSkillReference(ref) {
+				return nil, fmt.Errorf("skill %q was not found in the workspace; import it locally before running Terraform", ref)
 			}
-
-			imported, err := r.client.ImportSkill(ctx, ref, "skip")
-			if err != nil {
-				return nil, fmt.Errorf("import skill %q: %w", ref, err)
-			}
-			if imported.Skill != nil {
-				found = imported.Skill.ID
-			} else if imported.ExistingSkill != nil {
-				found = imported.ExistingSkill.ID
-			}
-			if found == "" {
-				return nil, fmt.Errorf("import skill %q returned no skill ID", ref)
-			}
+			return nil, fmt.Errorf("skill %q was not found in the workspace", ref)
 		}
 		ids = append(ids, found)
 	}
