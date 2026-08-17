@@ -57,6 +57,57 @@ func TestGetAgentReturnsStructuredHTTPError(t *testing.T) {
 	}
 }
 
+func TestGetAgentFallsBackToCollection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agents/agent-1":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		case "/api/agents":
+			if r.URL.Query().Get("include_archived") != "true" {
+				t.Fatalf("include_archived = %q, want true", r.URL.Query().Get("include_archived"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"agent-1","name":"archived-agent","archived_at":"2026-01-01T00:00:00Z"}]`))
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	agent, err := New(server.URL, "token", "workspace", nil).GetAgent(context.Background(), "agent-1")
+	if err != nil {
+		t.Fatalf("GetAgent() error = %v", err)
+	}
+	if agent.Name != "archived-agent" || agent.ArchivedAt == nil {
+		t.Fatalf("agent = %+v", agent)
+	}
+}
+
+func TestGetAutopilotFallsBackToCollection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/autopilots/autopilot-1":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		case "/api/autopilots":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"autopilots":[{"id":"autopilot-1","title":"legacy"}]}`))
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	autopilot, err := New(server.URL, "token", "workspace", nil).GetAutopilot(context.Background(), "autopilot-1")
+	if err != nil {
+		t.Fatalf("GetAutopilot() error = %v", err)
+	}
+	if autopilot["title"] != "legacy" {
+		t.Fatalf("autopilot = %#v", autopilot)
+	}
+}
+
 func TestImportSkillSendsConflictPolicyAndDecodesResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/skills/import" {

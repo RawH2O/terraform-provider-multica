@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -213,6 +214,55 @@ func (c *Client) DeleteJSONWithBody(ctx context.Context, path string, body any) 
 func (c *Client) GetAgent(ctx context.Context, id string) (Agent, error) {
 	var result Agent
 	err := c.get(ctx, "/api/agents/"+url.PathEscape(id), &result)
+	if err == nil {
+		return result, nil
+	}
+
+	// The single-agent endpoint hides archived agents, while the collection
+	// endpoint can include them. Keep imported archived agents readable so a
+	// one-time Terraform import does not immediately lose them from state.
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound {
+		return result, err
+	}
+	agents, listErr := c.ListAgents(ctx)
+	if listErr != nil {
+		return result, err
+	}
+	for _, agent := range agents {
+		if agent.ID == id {
+			return agent, nil
+		}
+	}
+	return result, err
+}
+
+func (c *Client) GetAutopilot(ctx context.Context, id string) (map[string]any, error) {
+	var result map[string]any
+	err := c.get(ctx, "/api/autopilots/"+url.PathEscape(id), &result)
+	if err == nil {
+		return result, nil
+	}
+
+	// Paused or legacy autopilots may be omitted by the detail endpoint while
+	// remaining present in the collection response. Preserve them during state
+	// refresh so a one-time Terraform import can still produce a destroy plan
+	// when the declaration is later removed from Git.
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound {
+		return result, err
+	}
+	var collection struct {
+		Autopilots []map[string]any `json:"autopilots"`
+	}
+	if listErr := c.get(ctx, "/api/autopilots", &collection); listErr != nil {
+		return result, err
+	}
+	for _, autopilot := range collection.Autopilots {
+		if value, ok := autopilot["id"].(string); ok && value == id {
+			return autopilot, nil
+		}
+	}
 	return result, err
 }
 
