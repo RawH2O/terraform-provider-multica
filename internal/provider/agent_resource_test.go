@@ -57,6 +57,27 @@ func TestIsArchivedAgentError(t *testing.T) {
 	}
 }
 
+func TestAgentArchiveStateConflictsAreIdempotent(t *testing.T) {
+	if !isAlreadyArchivedAgentError(&client.HTTPError{
+		StatusCode: http.StatusConflict,
+		Body:       `{"error":"agent is already archived"}`,
+	}) {
+		t.Fatal("already archived conflict should be idempotent")
+	}
+	if !isNotArchivedAgentError(&client.HTTPError{
+		StatusCode: http.StatusConflict,
+		Body:       `{"error":"agent is not archived"}`,
+	}) {
+		t.Fatal("not archived conflict should be idempotent")
+	}
+	if isNotArchivedAgentError(&client.HTTPError{
+		StatusCode: http.StatusConflict,
+		Body:       `{"error":"agent is already archived"}`,
+	}) {
+		t.Fatal("already archived conflict should not match restore state")
+	}
+}
+
 func TestResolveSkillsDoesNotImportMissingRemoteSkill(t *testing.T) {
 	var importCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,5 +106,39 @@ func TestResolveSkillsDoesNotImportMissingRemoteSkill(t *testing.T) {
 	}
 	if importCalls != 0 {
 		t.Fatalf("resolveSkills() made %d import calls, want 0", importCalls)
+	}
+}
+
+func TestResolveSkillsMatchesShorthandRemoteURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/skills" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]client.Skill{{
+			ID:   "skill-1",
+			Name: "serenity-skill",
+			Config: map[string]any{
+				"origin": map[string]any{
+					"source_url": "https://github.com/xiehengjian/serenity-skill",
+				},
+			},
+		}})
+	}))
+	defer server.Close()
+
+	resource := &agentResource{client: client.New(server.URL, "token", "workspace", nil)}
+	values, diags := types.SetValue(types.StringType, []attr.Value{
+		types.StringValue("github.com/xiehengjian/serenity-skill"),
+	})
+	if diags.HasError() {
+		t.Fatalf("types.SetValue() diagnostics = %v", diags)
+	}
+	ids, err := resource.resolveSkills(context.Background(), values)
+	if err != nil {
+		t.Fatalf("resolveSkills() error = %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "skill-1" {
+		t.Fatalf("resolveSkills() IDs = %#v, want [skill-1]", ids)
 	}
 }
