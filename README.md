@@ -42,7 +42,17 @@ The following existing fields are translated to the agent API: runtime
 selectors, model, instructions or `instructionsFile`, skills, runtime config,
 permissions, custom arguments, MCP configuration files, custom environment
 files, Composio allowlists, and archive state. A remote skill URL in `skills`
-is imported once with conflict policy `skip` and then attached by ID.
+is resolved against an existing workspace skill and then attached by ID. Import
+remote skills before Terraform runs, so CI never performs an implicit network
+import:
+
+```bash
+multica skill import --url https://github.com/example/skills/tree/main/review \
+  --output json
+```
+
+If the URL is not already present in the workspace, Terraform returns an
+actionable error instead of importing it during `plan` or `apply`.
 
 ### `multica_skill`
 
