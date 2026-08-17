@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -286,8 +287,7 @@ func (r *agentResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 	if err := r.client.ArchiveAgent(ctx, state.ID.ValueString()); err != nil {
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
+		if isArchivedAgentError(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -295,6 +295,18 @@ func (r *agentResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 	resp.State.RemoveResource(ctx)
+}
+
+func isArchivedAgentError(err error) bool {
+	var httpErr *client.HTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	if httpErr.StatusCode == http.StatusNotFound {
+		return true
+	}
+	return httpErr.StatusCode == http.StatusConflict &&
+		strings.Contains(strings.ToLower(httpErr.Body), "already archived")
 }
 
 func (r *agentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
