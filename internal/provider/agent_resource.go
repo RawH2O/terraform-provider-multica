@@ -149,7 +149,7 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		}
 	}
 	if !config.Archived.IsNull() && !config.Archived.IsUnknown() && config.Archived.ValueBool() {
-		if err := r.client.ArchiveAgent(ctx, created.ID); err != nil {
+		if err := r.client.ArchiveAgent(ctx, created.ID); err != nil && !isAlreadyArchivedAgentError(err) {
 			r.rollbackCreatedAgent(ctx, created.ID)
 			resp.Diagnostics.AddError("Failed to archive Multica agent", err.Error())
 			return
@@ -266,11 +266,11 @@ func (r *agentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	if !config.Archived.IsNull() && !config.Archived.IsUnknown() {
 		if config.Archived.ValueBool() {
-			if err := r.client.ArchiveAgent(ctx, state.ID.ValueString()); err != nil {
+			if err := r.client.ArchiveAgent(ctx, state.ID.ValueString()); err != nil && !isAlreadyArchivedAgentError(err) {
 				resp.Diagnostics.AddError("Failed to archive Multica agent", err.Error())
 				return
 			}
-		} else if err := r.client.RestoreAgent(ctx, state.ID.ValueString()); err != nil {
+		} else if err := r.client.RestoreAgent(ctx, state.ID.ValueString()); err != nil && !isNotArchivedAgentError(err) {
 			resp.Diagnostics.AddError("Failed to restore Multica agent", err.Error())
 			return
 		}
@@ -305,8 +305,19 @@ func isArchivedAgentError(err error) bool {
 	if httpErr.StatusCode == http.StatusNotFound {
 		return true
 	}
-	return httpErr.StatusCode == http.StatusConflict &&
+	return isAlreadyArchivedAgentError(err)
+}
+
+func isAlreadyArchivedAgentError(err error) bool {
+	var httpErr *client.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict &&
 		strings.Contains(strings.ToLower(httpErr.Body), "already archived")
+}
+
+func isNotArchivedAgentError(err error) bool {
+	var httpErr *client.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict &&
+		strings.Contains(strings.ToLower(httpErr.Body), "not archived")
 }
 
 func (r *agentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -450,7 +461,7 @@ func (r *agentResource) resolveSkills(ctx context.Context, values types.Set) ([]
 	for _, ref := range refs {
 		found := ""
 		for _, skill := range skills {
-			if skill.ID == ref || skill.Name == ref || skillSourceURL(skill) == ref {
+			if skillReferenceMatches(ref, skill) {
 				found = skill.ID
 				break
 			}
@@ -464,6 +475,19 @@ func (r *agentResource) resolveSkills(ctx context.Context, values types.Set) ([]
 		ids = append(ids, found)
 	}
 	return ids, nil
+}
+
+func skillReferenceMatches(reference string, skill client.Skill) bool {
+	return skill.ID == reference || skill.Name == reference ||
+		normalizeSkillReference(skillSourceURL(skill)) == normalizeSkillReference(reference)
+}
+
+func normalizeSkillReference(value string) string {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	if isRemoteSkillReference(value) && !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
+		return "https://" + value
+	}
+	return value
 }
 
 func isRemoteSkillReference(value string) bool {
@@ -546,7 +570,7 @@ func preserveSkillRefs(configured any, skills []client.Skill) []string {
 			if matched[index] {
 				continue
 			}
-			if skill.ID == ref || skill.Name == ref || skillSourceURL(skill) == ref {
+			if skillReferenceMatches(ref, skill) {
 				result = append(result, ref)
 				matched[index] = true
 				break
