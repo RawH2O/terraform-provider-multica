@@ -387,8 +387,8 @@ func (r *autopilotResource) Read(ctx context.Context, req resource.ReadRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var detail map[string]any
-	if err := r.client.GetJSON(ctx, "/api/autopilots/"+state.ID.ValueString(), &detail); err != nil {
+	detail, err := r.client.GetAutopilot(ctx, state.ID.ValueString())
+	if err != nil {
 		if isNotFound(err) {
 			resp.State.RemoveResource(ctx)
 			return
@@ -514,8 +514,8 @@ func (r *autopilotResource) autopilotBody(ctx context.Context, config map[string
 }
 
 func (r *autopilotResource) syncAutopilotTriggers(ctx context.Context, autopilotID string, config map[string]any) error {
-	var detail map[string]any
-	if err := r.client.GetJSON(ctx, "/api/autopilots/"+autopilotID, &detail); err != nil {
+	detail, err := r.client.GetAutopilot(ctx, autopilotID)
+	if err != nil {
 		return err
 	}
 	current := objectList(detail["triggers"])
@@ -644,6 +644,11 @@ func canonicalAutopilotConfig(detail map[string]any) map[string]any {
 }
 
 func setConfigContentHash(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// A resource imported into state but removed from Git has a null destroy
+	// plan. Do not decode that null object into the config model.
+	if req.Plan.Raw.IsNull() {
+		return
+	}
 	var plan configResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() || plan.Config.IsNull() || plan.Config.IsUnknown() {

@@ -168,6 +168,12 @@ func (r *agentResource) rollbackCreatedAgent(ctx context.Context, id string) {
 }
 
 func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Terraform supplies a null plan when a state-only resource is being
+	// destroyed because its declaration was removed from configuration. There
+	// is no content hash to compute in that case.
+	if req.Plan.Raw.IsNull() {
+		return
+	}
 	var plan agentResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() || plan.Config.IsNull() || plan.Config.IsUnknown() {
