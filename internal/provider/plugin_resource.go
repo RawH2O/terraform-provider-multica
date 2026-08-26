@@ -148,6 +148,9 @@ func (r *pluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 	plan.ContentHash = types.StringValue(bundle.contentHash)
 	if plan.GrantedScopes.IsNull() || plan.GrantedScopes.IsUnknown() {
 		plan.GrantedScopes = stringSetValue(bundle.manifest.Scopes)
+	} else if _, err := plannedPluginScopes(ctx, plan, bundle.manifest); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("granted_scopes"), "Invalid Multica plugin scopes", err.Error())
+		return
 	}
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
