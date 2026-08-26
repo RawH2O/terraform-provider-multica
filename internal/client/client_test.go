@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -162,5 +163,43 @@ func TestDeleteJSONWithBodySendsJSONPayload(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("DeleteJSONWithBody() error = %v", err)
+	}
+}
+
+func TestPublishPluginPackageUsesWorkspaceMultipartEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/workspaces/workspace/plugins/packages" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+			t.Fatalf("parse multipart form: %v", err)
+		}
+		file, _, err := r.FormFile("bundle")
+		if err != nil {
+			t.Fatalf("bundle form file: %v", err)
+		}
+		defer file.Close()
+		var got []byte
+		got, err = io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("read bundle: %v", err)
+		}
+		if string(got) != "zip-bytes" {
+			t.Fatalf("bundle = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"package-1","plugin_key":"com.example.relay","name":"Relay","versions":[{"id":"version-1","version":"1.0.0"}]}`))
+	}))
+	defer server.Close()
+
+	packageSummary, err := New(server.URL, "token", "workspace", nil).PublishPluginPackage(context.Background(), []byte("zip-bytes"))
+	if err != nil {
+		t.Fatalf("PublishPluginPackage() error = %v", err)
+	}
+	if packageSummary.ID != "package-1" || len(packageSummary.Versions) != 1 {
+		t.Fatalf("package summary = %+v", packageSummary)
 	}
 }
