@@ -6,8 +6,17 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+func TestPluginResourceSchemaIsValid(t *testing.T) {
+	response := resource.SchemaResponse{}
+	(&pluginResource{}).Schema(context.Background(), resource.SchemaRequest{}, &response)
+	if diagnostics := response.Schema.ValidateImplementation(context.Background()); diagnostics.HasError() {
+		t.Fatalf("plugin resource schema diagnostics = %v", diagnostics)
+	}
+}
 
 func TestReadPluginBundleIsDeterministic(t *testing.T) {
 	root := t.TempDir()
