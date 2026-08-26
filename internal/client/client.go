@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -71,6 +72,38 @@ type SkillFile struct {
 	Content   string `json:"content"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+type PluginPackage struct {
+	ID        string                 `json:"id"`
+	PluginKey string                 `json:"plugin_key"`
+	Name      string                 `json:"name"`
+	Versions  []PluginPackageVersion `json:"versions"`
+	CreatedAt string                 `json:"created_at"`
+}
+
+type PluginPackageVersion struct {
+	ID          string `json:"id"`
+	Version     string `json:"version"`
+	Digest      string `json:"digest"`
+	SizeBytes   int64  `json:"size_bytes"`
+	PublishedAt string `json:"published_at"`
+	Installed   bool   `json:"installed"`
+}
+
+type PluginInstallation struct {
+	ID                string         `json:"id"`
+	PluginKey         string         `json:"plugin_key"`
+	Name              string         `json:"name"`
+	Description       string         `json:"description"`
+	Version           string         `json:"version"`
+	PackageVersionID  string         `json:"package_version_id"`
+	Enabled           bool           `json:"enabled"`
+	GrantedScopes     []string       `json:"granted_scopes"`
+	Config            map[string]any `json:"config"`
+	ConfiguredSecrets []string       `json:"configured_secrets"`
+	CreatedAt         string         `json:"created_at"`
+	UpdatedAt         string         `json:"updated_at"`
 }
 
 type SkillImportResult struct {
@@ -298,6 +331,93 @@ func (c *Client) SetAgentEnv(ctx context.Context, id string, env map[string]stri
 	}, nil)
 }
 
+func (c *Client) ListPluginPackages(ctx context.Context) ([]PluginPackage, error) {
+	var result struct {
+		Packages []PluginPackage `json:"packages"`
+	}
+	if err := c.get(ctx, "/api/workspaces/"+url.PathEscape(c.WorkspaceID)+"/plugins/packages", &result); err != nil {
+		return nil, err
+	}
+	return result.Packages, nil
+}
+
+func (c *Client) PublishPluginPackage(ctx context.Context, archive []byte) (PluginPackage, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("bundle", "multica.plugin.zip")
+	if err != nil {
+		return PluginPackage{}, err
+	}
+	if _, err := part.Write(archive); err != nil {
+		return PluginPackage{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return PluginPackage{}, err
+	}
+
+	path := "/api/workspaces/" + url.PathEscape(c.WorkspaceID) + "/plugins/packages"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, &body)
+	if err != nil {
+		return PluginPackage{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.setHeaders(req)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return PluginPackage{}, err
+	}
+	defer resp.Body.Close()
+
+	var result PluginPackage
+	if err := decodeResponse(resp, http.MethodPost, path, &result); err != nil {
+		return PluginPackage{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) ListPluginInstallations(ctx context.Context) ([]PluginInstallation, error) {
+	var result struct {
+		Plugins []PluginInstallation `json:"plugins"`
+	}
+	if err := c.get(ctx, "/api/workspaces/"+url.PathEscape(c.WorkspaceID)+"/plugins", &result); err != nil {
+		return nil, err
+	}
+	return result.Plugins, nil
+}
+
+func (c *Client) InstallPlugin(ctx context.Context, versionID string, grantedScopes []string) (PluginInstallation, error) {
+	var result PluginInstallation
+	path := "/api/workspaces/" + url.PathEscape(c.WorkspaceID) + "/plugins"
+	err := c.post(ctx, path, map[string]any{
+		"version_id":     versionID,
+		"granted_scopes": grantedScopes,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) ConfigurePlugin(ctx context.Context, installationID string, values map[string]any) (PluginInstallation, error) {
+	var result PluginInstallation
+	path := "/api/workspaces/" + url.PathEscape(c.WorkspaceID) + "/plugins/" + url.PathEscape(installationID) + "/config"
+	err := c.put(ctx, path, map[string]any{"values": values}, &result)
+	return result, err
+}
+
+func (c *Client) SetPluginEnabled(ctx context.Context, installationID string, enabled bool) (PluginInstallation, error) {
+	var result PluginInstallation
+	action := "disable"
+	if enabled {
+		action = "enable"
+	}
+	path := "/api/workspaces/" + url.PathEscape(c.WorkspaceID) + "/plugins/" + url.PathEscape(installationID) + "/" + action
+	err := c.post(ctx, path, nil, &result)
+	return result, err
+}
+
+func (c *Client) UninstallPlugin(ctx context.Context, installationID string) error {
+	path := "/api/workspaces/" + url.PathEscape(c.WorkspaceID) + "/plugins/" + url.PathEscape(installationID)
+	return c.delete(ctx, path)
+}
+
 func (c *Client) request(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
@@ -315,6 +435,12 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*h
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	c.setHeaders(req)
+
+	return c.HTTPClient.Do(req)
+}
+
+func (c *Client) setHeaders(req *http.Request) {
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
@@ -322,8 +448,6 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*h
 		req.Header.Set("X-Workspace-ID", c.WorkspaceID)
 	}
 	req.Header.Set("X-Client-Platform", "terraform-provider-multica")
-
-	return c.HTTPClient.Do(req)
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {
@@ -352,7 +476,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return err
 	}
 	defer resp.Body.Close()
+	return decodeResponse(resp, method, path, out)
+}
 
+func decodeResponse(resp *http.Response, method, path string, out any) error {
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return &HTTPError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: string(data)}

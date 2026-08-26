@@ -121,6 +121,45 @@ The current Multica autopilot API does not persist the old declarative
 ignored. Squad member `responsibility` and display-only fields are preserved
 in Git but are not sent to an API endpoint that can persist them yet.
 
+### `multica_plugin`
+
+Plugins are managed from a local package directory. Terraform publishes the
+directory as an immutable Multica package version, installs that version, and
+then reconciles its configuration and enabled state:
+
+```hcl
+resource "multica_plugin" "relay" {
+  package_dir = "${path.module}/../../deploy/multica-plugin-relay"
+  enabled     = true
+
+  config = {
+    title_prefix = "通知"
+    bark_group   = "Multica"
+  }
+}
+```
+
+`manifest` can override `multica.plugin.json` while keeping the package files
+in `package_dir`. This is useful when a deployment-specific hook URL is
+created by another Terraform stack:
+
+```hcl
+manifest = templatefile("${path.module}/relay-manifest.json.tftpl", {
+  relay_url = var.multica_plugin_relay_url
+})
+```
+
+If `granted_scopes` is omitted, the exact scopes declared by
+`multica.plugin.json` are granted. Explicit scopes must match the manifest
+exactly. An update publishes and installs a new package version; package
+versions are immutable, so bump `version` in `multica.plugin.json` whenever
+the package contents change. Destroying the resource uninstalls the plugin but
+does not delete its published package history.
+
+The resource manages plain configuration values only. Plugin secret fields are
+write-only in the Multica API and should be configured through the workspace's
+secret management flow rather than Terraform state.
+
 ## State and secrets
 
 The agent, squad, and autopilot resources expose a computed `content_hash`;
@@ -140,6 +179,7 @@ populate the dynamic config:
 terraform import multica_skill.review <skill-uuid>
 terraform import multica_squad.research <squad-uuid>
 terraform import multica_autopilot.market_close <autopilot-uuid>
+terraform import multica_plugin.relay <installation-uuid>
 ```
 
 ## Local verification
