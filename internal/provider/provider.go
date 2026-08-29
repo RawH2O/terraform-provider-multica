@@ -84,6 +84,8 @@ func (p *multicaProvider) Resources(_ context.Context) []func() resource.Resourc
 	return []func() resource.Resource{
 		newAgentResource,
 		newSkillResource,
+		newHookResource,
+		newPluginResource,
 		newSquadResource,
 		newAutopilotResource,
 	}

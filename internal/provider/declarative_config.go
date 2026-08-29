@@ -63,6 +63,13 @@ func decodeDeclarativeConfig(ctx context.Context, value types.Dynamic) (agentCon
 		}
 		config.Skills = stringSetValue(refs)
 	}
+	if hooks, exists := root["hooks"]; exists {
+		refs, err := stringRefs(hooks)
+		if err != nil {
+			return agentConfigModel{}, fmt.Errorf("hooks: %w", err)
+		}
+		config.Hooks = stringSetValue(refs)
+	}
 
 	multica, ok := objectValue(root, "multica")
 	if !ok {
@@ -168,6 +175,10 @@ func modelID(value any) (string, error) {
 }
 
 func skillRefs(value any) ([]string, error) {
+	return stringRefs(value)
+}
+
+func stringRefs(value any) ([]string, error) {
 	items, ok := value.([]any)
 	if !ok {
 		return nil, fmt.Errorf("must be a list")
@@ -528,6 +539,11 @@ func encodeDeclarativeConfig(config agentConfigModel) types.Dynamic {
 		_ = config.Skills.ElementsAs(context.Background(), &skills, false)
 		root["skills"] = skills
 	}
+	if !config.Hooks.IsNull() {
+		var hooks []string
+		_ = config.Hooks.ElementsAs(context.Background(), &hooks, false)
+		root["hooks"] = hooks
+	}
 	multica := map[string]any{}
 	multica["runtime"] = runtimeReference(config.Runtime)
 	if !config.RuntimeConfig.IsNull() {
@@ -650,6 +666,9 @@ func mergeDeclarativeState(ctx context.Context, state types.Dynamic, agent clien
 	}
 	if _, exists := root["skills"]; exists {
 		root["skills"] = preserveSkillRefs(root["skills"], agent.Skills)
+	}
+	if _, exists := root["hooks"]; exists {
+		root["hooks"] = preserveHookRefs(root["hooks"], agent.Hooks)
 	}
 	multica, ok := root["multica"].(map[string]any)
 	if !ok {

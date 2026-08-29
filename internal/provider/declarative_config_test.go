@@ -23,6 +23,10 @@ func TestDecodeDeclarativeAgentConfig(t *testing.T) {
 			"unity-development",
 			map[string]any{"name": "optional-review-checks", "enabled": false},
 		},
+		"hooks": []any{
+			"require-mention",
+			map[string]any{"name": "disabled-hook", "enabled": false},
+		},
 		"multica": map[string]any{
 			"runtime":            "main-desktop",
 			"runtimeConfig":      map[string]any{"sandbox": "strict"},
@@ -49,6 +53,13 @@ func TestDecodeDeclarativeAgentConfig(t *testing.T) {
 	}
 	if got := config.Model.ValueString(); got != "gpt-5.6" {
 		t.Fatalf("model = %q", got)
+	}
+	var hooks []string
+	if diags := config.Hooks.ElementsAs(context.Background(), &hooks, false); diags.HasError() {
+		t.Fatalf("hooks diagnostics = %v", diags)
+	}
+	if len(hooks) != 1 || hooks[0] != "require-mention" {
+		t.Fatalf("hooks = %v", hooks)
 	}
 	if got := config.PermissionMode.ValueString(); got != "public_to" {
 		t.Fatalf("permission mode = %q", got)
@@ -117,7 +128,7 @@ func TestDeclarativeFilesAreLoadedRelativeToWorkingDirectory(t *testing.T) {
 	}
 }
 
-func TestRequestBodyResolvesDeclarativeRuntimeAndSkills(t *testing.T) {
+func TestRequestBodyResolvesDeclarativeRuntimeSkillsAndHooks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -125,6 +136,8 @@ func TestRequestBodyResolvesDeclarativeRuntimeAndSkills(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"id":"runtime-1","name":"main-desktop","provider":"codex"}]`))
 		case "/api/skills":
 			_, _ = w.Write([]byte(`[{"id":"skill-1","name":"unity-development"}]`))
+		case "/api/hooks":
+			_, _ = w.Write([]byte(`[{"id":"hook-1","name":"require-mention"}]`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -136,8 +149,9 @@ func TestRequestBodyResolvesDeclarativeRuntimeAndSkills(t *testing.T) {
 		Runtime:       runtimeSelectorModel{Reference: types.StringValue("main-desktop")},
 		RuntimeConfig: types.StringValue(`{"sandbox":"strict"}`),
 		Skills:        stringSetValue([]string{"unity-development"}),
+		Hooks:         stringSetValue([]string{"require-mention"}),
 	}
-	body, skillIDs, err := (&agentResource{client: client.New(server.URL, "token", "workspace", nil)}).requestBody(context.Background(), config)
+	body, skillIDs, hookIDs, err := (&agentResource{client: client.New(server.URL, "token", "workspace", nil)}).requestBody(context.Background(), config)
 	if err != nil {
 		t.Fatalf("requestBody() error = %v", err)
 	}
@@ -146,6 +160,9 @@ func TestRequestBodyResolvesDeclarativeRuntimeAndSkills(t *testing.T) {
 	}
 	if len(skillIDs) != 1 || skillIDs[0] != "skill-1" {
 		t.Fatalf("skill IDs = %v", skillIDs)
+	}
+	if len(hookIDs) != 1 || hookIDs[0] != "hook-1" {
+		t.Fatalf("hook IDs = %v", hookIDs)
 	}
 	encoded, err := json.Marshal(body["runtime_config"])
 	if err != nil {
