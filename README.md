@@ -35,6 +35,7 @@ The agent resource accepts the declarative agent object directly:
 ```hcl
 resource "multica_agent" "developer" {
   config = yamldecode(file("${path.root}/agents/developer/agent.yaml"))
+  depends_on = [multica_hook.require_mention]
 }
 ```
 
@@ -83,6 +84,46 @@ resource "multica_skill" "github_review" {
 
 `SKILL.md` is represented by `content` and must not be repeated in `files`.
 The resource also preserves API `config`, including the import origin.
+
+### `multica_hook`
+
+Hooks are workspace-level definitions managed by Terraform. The first API
+version supports the Codex runner; `providers` defaults to `codex` when it is
+omitted:
+
+```hcl
+resource "multica_hook" "require_mention" {
+  name    = "require-mention"
+  command = "agent-hook-kit"
+  events  = ["Stop", "UserPromptSubmit"]
+  matcher = "multica comment create"
+}
+```
+
+Reference the hook by name or UUID from an agent declaration. The binding is
+reconciled as a complete set, so removing a name from Git removes that Hook
+from the Agent:
+
+```yaml
+name: developer
+hooks:
+  - require-mention
+multica:
+  runtime: main-desktop
+```
+
+```hcl
+resource "multica_agent" "developer" {
+  config = yamldecode(file("${path.root}/agents/developer/agent.yaml"))
+}
+```
+
+Hooks referenced by an Agent must already exist in the workspace. Declare the
+corresponding `multica_hook` resources in the same Terraform configuration or
+import existing hooks first; the provider never creates hooks implicitly while
+resolving an Agent reference. When the hook name only appears inside
+`yamldecode`, add an explicit `depends_on` as shown above so Terraform creates
+the Hook before it resolves the Agent binding.
 
 ### `multica_squad`
 
@@ -177,6 +218,7 @@ populate the dynamic config:
 
 ```bash
 terraform import multica_skill.review <skill-uuid>
+terraform import multica_hook.require_mention <hook-uuid>
 terraform import multica_squad.research <squad-uuid>
 terraform import multica_autopilot.market_close <autopilot-uuid>
 terraform import multica_plugin.relay <installation-uuid>

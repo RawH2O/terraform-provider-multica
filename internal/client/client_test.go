@@ -38,6 +38,80 @@ func TestListRuntimesDecodesResponseAndScopesRequest(t *testing.T) {
 	}
 }
 
+func TestHookCRUDAndAgentBindingUseHookEndpoints(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			if r.Method != http.MethodGet || r.URL.Path != "/api/hooks" {
+				t.Fatalf("request = %s %s, want GET /api/hooks", r.Method, r.URL.Path)
+			}
+			_, _ = w.Write([]byte(`[{"id":"hook-1","name":"require-mention","events":["Stop"]}]`))
+		case 2:
+			if r.Method != http.MethodPost || r.URL.Path != "/api/hooks" {
+				t.Fatalf("request = %s %s, want POST /api/hooks", r.Method, r.URL.Path)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			if body["name"] != "require-mention" || body["command"] != "agent-hook-kit" {
+				t.Fatalf("create body = %#v", body)
+			}
+			_, _ = w.Write([]byte(`{"id":"hook-1","name":"require-mention","command":"agent-hook-kit","events":["Stop"]}`))
+		case 3:
+			if r.Method != http.MethodPut || r.URL.Path != "/api/hooks/hook-1" {
+				t.Fatalf("request = %s %s, want PUT /api/hooks/hook-1", r.Method, r.URL.Path)
+			}
+			_, _ = w.Write([]byte(`{"id":"hook-1","name":"require-mention-v2","command":"agent-hook-kit","events":["Stop"]}`))
+		case 4:
+			if r.Method != http.MethodDelete || r.URL.Path != "/api/hooks/hook-1" {
+				t.Fatalf("request = %s %s, want DELETE /api/hooks/hook-1", r.Method, r.URL.Path)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case 5:
+			if r.Method != http.MethodPut || r.URL.Path != "/api/agents/agent-1/hooks" {
+				t.Fatalf("request = %s %s, want PUT /api/agents/agent-1/hooks", r.Method, r.URL.Path)
+			}
+			var body map[string][]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode binding body: %v", err)
+			}
+			if len(body["hook_ids"]) != 1 || body["hook_ids"][0] != "hook-1" {
+				t.Fatalf("binding body = %#v", body)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request %d: %s %s", requests, r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := New(server.URL, "token", "workspace", nil)
+	hooks, err := c.ListHooks(context.Background())
+	if err != nil || len(hooks) != 1 || hooks[0].ID != "hook-1" {
+		t.Fatalf("ListHooks() = %#v, error = %v", hooks, err)
+	}
+	created, err := c.CreateHook(context.Background(), map[string]any{
+		"name": "require-mention", "command": "agent-hook-kit", "events": []string{"Stop"},
+	})
+	if err != nil || created.ID != "hook-1" {
+		t.Fatalf("CreateHook() = %#v, error = %v", created, err)
+	}
+	updated, err := c.UpdateHook(context.Background(), "hook-1", map[string]any{"name": "require-mention-v2"})
+	if err != nil || updated.Name != "require-mention-v2" {
+		t.Fatalf("UpdateHook() = %#v, error = %v", updated, err)
+	}
+	if err := c.DeleteHook(context.Background(), "hook-1"); err != nil {
+		t.Fatalf("DeleteHook() error = %v", err)
+	}
+	if err := c.SetAgentHooks(context.Background(), "agent-1", []string{"hook-1"}); err != nil {
+		t.Fatalf("SetAgentHooks() error = %v", err)
+	}
+}
+
 func TestGetAgentReturnsStructuredHTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

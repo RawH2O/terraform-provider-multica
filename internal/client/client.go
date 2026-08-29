@@ -74,6 +74,22 @@ type SkillFile struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+// Hook is a workspace-managed hook definition. Enabled is populated when the
+// hook is returned through an agent binding; it is not part of the global hook
+// definition itself.
+type Hook struct {
+	ID          string   `json:"id"`
+	WorkspaceID string   `json:"workspace_id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Command     string   `json:"command"`
+	Providers   []string `json:"providers"`
+	Events      []string `json:"events"`
+	Matcher     string   `json:"matcher"`
+	Config      any      `json:"config"`
+	Enabled     bool     `json:"enabled"`
+}
+
 type PluginPackage struct {
 	ID        string                 `json:"id"`
 	PluginKey string                 `json:"plugin_key"`
@@ -146,6 +162,7 @@ type Agent struct {
 	ComposioAllowlist         []string           `json:"composio_toolkit_allowlist"`
 	ComposioAllowlistRedacted bool               `json:"composio_toolkit_allowlist_redacted"`
 	Skills                    []Skill            `json:"skills"`
+	Hooks                     []Hook             `json:"hooks"`
 	ArchivedAt                *string            `json:"archived_at"`
 }
 
@@ -187,6 +204,34 @@ func (c *Client) UpdateSkill(ctx context.Context, id string, body map[string]any
 
 func (c *Client) DeleteSkill(ctx context.Context, id string) error {
 	return c.delete(ctx, "/api/skills/"+url.PathEscape(id))
+}
+
+func (c *Client) ListHooks(ctx context.Context) ([]Hook, error) {
+	var result []Hook
+	err := c.get(ctx, "/api/hooks", &result)
+	return result, err
+}
+
+func (c *Client) GetHook(ctx context.Context, id string) (Hook, error) {
+	var result Hook
+	err := c.get(ctx, "/api/hooks/"+url.PathEscape(id), &result)
+	return result, err
+}
+
+func (c *Client) CreateHook(ctx context.Context, body map[string]any) (Hook, error) {
+	var result Hook
+	err := c.post(ctx, "/api/hooks", body, &result)
+	return result, err
+}
+
+func (c *Client) UpdateHook(ctx context.Context, id string, body map[string]any) (Hook, error) {
+	var result Hook
+	err := c.put(ctx, "/api/hooks/"+url.PathEscape(id), body, &result)
+	return result, err
+}
+
+func (c *Client) DeleteHook(ctx context.Context, id string) error {
+	return c.delete(ctx, "/api/hooks/"+url.PathEscape(id))
 }
 
 func (c *Client) ImportSkill(ctx context.Context, sourceURL, onConflict string) (SkillImportResult, error) {
@@ -322,6 +367,12 @@ func (c *Client) RestoreAgent(ctx context.Context, id string) error {
 func (c *Client) SetAgentSkills(ctx context.Context, id string, skillIDs []string) error {
 	return c.put(ctx, "/api/agents/"+url.PathEscape(id)+"/skills", map[string]any{
 		"skill_ids": skillIDs,
+	}, nil)
+}
+
+func (c *Client) SetAgentHooks(ctx context.Context, id string, hookIDs []string) error {
+	return c.put(ctx, "/api/agents/"+url.PathEscape(id)+"/hooks", map[string]any{
+		"hook_ids": hookIDs,
 	}, nil)
 }
 

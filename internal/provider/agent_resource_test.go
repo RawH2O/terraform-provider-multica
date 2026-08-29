@@ -142,3 +142,27 @@ func TestResolveSkillsMatchesShorthandRemoteURL(t *testing.T) {
 		t.Fatalf("resolveSkills() IDs = %#v, want [skill-1]", ids)
 	}
 }
+
+func TestResolveHooksMatchesName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/hooks" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]client.Hook{{ID: "hook-1", Name: "require-mention"}})
+	}))
+	defer server.Close()
+
+	resource := &agentResource{client: client.New(server.URL, "token", "workspace", nil)}
+	values, diags := types.SetValue(types.StringType, []attr.Value{types.StringValue("require-mention")})
+	if diags.HasError() {
+		t.Fatalf("types.SetValue() diagnostics = %v", diags)
+	}
+	ids, err := resource.resolveHooks(context.Background(), values)
+	if err != nil {
+		t.Fatalf("resolveHooks() error = %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "hook-1" {
+		t.Fatalf("resolveHooks() IDs = %#v, want [hook-1]", ids)
+	}
+}
