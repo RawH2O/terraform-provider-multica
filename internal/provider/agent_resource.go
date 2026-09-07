@@ -88,7 +88,11 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			// expanded union forms (model, skills, permission), plus arbitrary
 			// runtime_config and file references. Terraform's yamldecode()
 			// preserves those shapes for the provider to validate.
-			"config": schema.DynamicAttribute{Required: true},
+			"config": schema.DynamicAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Declarative agent configuration.",
+			},
 			"content_hash": schema.StringAttribute{
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
