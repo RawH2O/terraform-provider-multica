@@ -280,7 +280,7 @@ func skillStateFromAPI(previous skillResourceModel, skill client.Skill) skillRes
 	previous.Name = types.StringValue(skill.Name)
 	previous.Description = types.StringValue(skill.Description)
 	previous.Content = types.StringValue(skill.Content)
-	if skill.Config == nil {
+	if skill.Config == nil || (isEmptyCollection(skill.Config) && previous.Config.IsNull()) {
 		previous.Config = types.DynamicNull()
 	} else {
 		previous.Config = goToDynamic(skill.Config)

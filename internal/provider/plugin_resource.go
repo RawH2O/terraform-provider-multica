@@ -104,19 +104,31 @@ func (r *pluginResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "Plain-text plugin configuration values. Secret values are not managed by this resource.",
 			},
 			"plugin_key": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Plugin key from the package manifest.",
 			},
 			"version": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Installed immutable plugin package version.",
 			},
 			"package_version_id": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Multica package version ID used by the installation.",
 			},
 			"content_hash": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "SHA-256 hash of the deterministic package archive.",
 			},
 		},
@@ -159,9 +171,26 @@ func (r *pluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		resp.Diagnostics.AddAttributeError(path.Root("granted_scopes"), "Invalid Multica plugin scopes", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("plugin_key"), plan.PluginKey)...)
-	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("version"), plan.Version)...)
-	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), plan.ContentHash)...)
+	if req.State.Raw.IsNull() {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("plugin_key"), plan.PluginKey)...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("version"), plan.Version)...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), plan.ContentHash)...)
+	} else {
+		var state pluginResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if state.PluginKey.IsNull() || state.PluginKey.IsUnknown() || state.PluginKey.ValueString() != plan.PluginKey.ValueString() {
+			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("plugin_key"), plan.PluginKey)...)
+		}
+		if state.Version.IsNull() || state.Version.IsUnknown() || state.Version.ValueString() != plan.Version.ValueString() {
+			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("version"), plan.Version)...)
+		}
+		if state.ContentHash.IsNull() || state.ContentHash.IsUnknown() || state.ContentHash.ValueString() != plan.ContentHash.ValueString() {
+			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), plan.ContentHash)...)
+		}
+	}
 	if !plan.GrantedScopes.IsNull() && !plan.GrantedScopes.IsUnknown() {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("granted_scopes"), plan.GrantedScopes)...)
 	}

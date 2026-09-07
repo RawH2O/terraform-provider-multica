@@ -38,7 +38,10 @@ func configResourceSchema(description string) schema.Schema {
 			Description: description,
 		},
 		"content_hash": schema.StringAttribute{
-			Computed:    true,
+			Computed: true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
+			},
 			Description: "Hash of the declarative configuration and referenced files.",
 		},
 	}}
@@ -665,6 +668,16 @@ func setConfigContentHash(ctx context.Context, req resource.ModifyPlanRequest, r
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to hash declarative configuration", err.Error())
 		return
+	}
+	if !req.State.Raw.IsNull() {
+		var state configResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if !state.ContentHash.IsNull() && !state.ContentHash.IsUnknown() && state.ContentHash.ValueString() == hash {
+			return
+		}
 	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringValue(hash))...)
 }

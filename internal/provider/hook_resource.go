@@ -246,7 +246,7 @@ func hookStateFromAPI(previous hookResourceModel, hook client.Hook) hookResource
 	previous.Providers = stringSetValue(hook.Providers)
 	previous.Events = stringSetValue(hook.Events)
 	previous.Matcher = types.StringValue(hook.Matcher)
-	if hook.Config == nil {
+	if hook.Config == nil || (isEmptyCollection(hook.Config) && previous.Config.IsNull()) {
 		previous.Config = types.DynamicNull()
 	} else {
 		previous.Config = goToDynamic(hook.Config)

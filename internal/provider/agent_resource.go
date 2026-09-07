@@ -91,7 +91,10 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			// preserves those shapes for the provider to validate.
 			"config": schema.DynamicAttribute{Required: true},
 			"content_hash": schema.StringAttribute{
-				Computed:    true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Hash of the declaration and referenced file contents.",
 			},
 		},
@@ -195,6 +198,16 @@ func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to hash agent declaration", err.Error())
 		return
+	}
+	if !req.State.Raw.IsNull() {
+		var state agentResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if !state.ContentHash.IsNull() && !state.ContentHash.IsUnknown() && state.ContentHash.ValueString() == hash {
+			return
+		}
 	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringValue(hash))...)
 }
