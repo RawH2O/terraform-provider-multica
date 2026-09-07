@@ -79,3 +79,23 @@ func TestPreserveSkillRefsKeepsRemoteURLInAgentState(t *testing.T) {
 		t.Fatalf("refs = %#v, want %#v", got, []string{remoteURL})
 	}
 }
+
+func TestSkillStateNormalizesEmptyRemoteConfigWhenUnset(t *testing.T) {
+	state := skillStateFromAPI(skillResourceModel{Config: types.DynamicNull()}, client.Skill{
+		ID:     "skill-1",
+		Name:   "review",
+		Config: map[string]any{},
+	})
+	if !state.Config.IsNull() {
+		t.Fatalf("empty remote config = %#v, want null", state.Config)
+	}
+
+	explicit := skillStateFromAPI(skillResourceModel{Config: goToDynamic(map[string]any{})}, client.Skill{
+		ID:     "skill-1",
+		Name:   "review",
+		Config: map[string]any{},
+	})
+	if explicit.Config.IsNull() {
+		t.Fatal("explicit empty config should remain configured")
+	}
+}

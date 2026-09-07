@@ -62,3 +62,23 @@ func TestHookStateFromAPIPreservesDefinition(t *testing.T) {
 		t.Fatalf("hookStringSet() = %v, error = %v", providers, err)
 	}
 }
+
+func TestHookStateNormalizesEmptyRemoteConfigWhenUnset(t *testing.T) {
+	state := hookStateFromAPI(hookResourceModel{Config: types.DynamicNull()}, client.Hook{
+		ID:     "hook-1",
+		Name:   "require-mention",
+		Config: map[string]any{},
+	})
+	if !state.Config.IsNull() {
+		t.Fatalf("empty remote config = %#v, want null", state.Config)
+	}
+
+	explicit := hookStateFromAPI(hookResourceModel{Config: goToDynamic(map[string]any{})}, client.Hook{
+		ID:     "hook-1",
+		Name:   "require-mention",
+		Config: map[string]any{},
+	})
+	if explicit.Config.IsNull() {
+		t.Fatal("explicit empty config should remain configured")
+	}
+}
