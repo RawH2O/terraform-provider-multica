@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/xiehengjian/terraform-provider-multica/internal/client"
 )
@@ -46,7 +48,12 @@ func (r *skillResource) Metadata(_ context.Context, req resource.MetadataRequest
 func (r *skillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{Computed: true},
+			"id": schema.StringAttribute{
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"name": schema.StringAttribute{
 				Required:    true,
 				Description: "Workspace-unique skill name.",
@@ -58,6 +65,7 @@ func (r *skillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"config": schema.DynamicAttribute{
 				Optional:    true,
+				Computed:    true,
 				Description: "Arbitrary skill metadata, including import provenance.",
 			},
 			"files": schema.SetNestedAttribute{
@@ -273,7 +281,7 @@ func skillStateFromAPI(previous skillResourceModel, skill client.Skill) skillRes
 	previous.Name = types.StringValue(skill.Name)
 	previous.Description = types.StringValue(skill.Description)
 	previous.Content = types.StringValue(skill.Content)
-	if skill.Config == nil {
+	if skill.Config == nil || (isEmptyCollection(skill.Config) && previous.Config.IsNull()) {
 		previous.Config = types.DynamicNull()
 	} else {
 		previous.Config = goToDynamic(skill.Config)

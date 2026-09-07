@@ -12,6 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/xiehengjian/terraform-provider-multica/internal/client"
 )
@@ -49,6 +51,7 @@ type agentConfigModel struct {
 	Visibility               types.String         `tfsdk:"visibility"`
 	Skills                   types.Set            `tfsdk:"skills"`
 	InvocationTargets        types.Set            `tfsdk:"invocation_targets"`
+	Hooks                    types.Set            `tfsdk:"hooks"`
 	CustomEnv                types.Map            `tfsdk:"custom_env"`
 	MCPConfig                types.String         `tfsdk:"mcp_config"`
 	ComposioToolkitAllowlist types.Set            `tfsdk:"composio_toolkit_allowlist"`
@@ -78,14 +81,24 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			// Dynamic is intentional: multica-declarative has compact and
 			// expanded union forms (model, skills, permission), plus arbitrary
 			// runtime_config and file references. Terraform's yamldecode()
 			// preserves those shapes for the provider to validate.
-			"config": schema.DynamicAttribute{Required: true},
-			"content_hash": schema.StringAttribute{
+			"config": schema.DynamicAttribute{
+				Optional:    true,
 				Computed:    true,
+				Description: "Declarative agent configuration.",
+			},
+			"content_hash": schema.StringAttribute{
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 				Description: "Hash of the declaration and referenced file contents.",
 			},
 		},
@@ -120,7 +133,7 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	body, skillIDs, err := r.requestBody(ctx, config)
+	body, skillIDs, hookIDs, err := r.requestBody(ctx, config)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid agent config", err.Error())
 		return
@@ -133,6 +146,11 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if err := r.client.SetAgentSkills(ctx, created.ID, skillIDs); err != nil {
 		r.rollbackCreatedAgent(ctx, created.ID)
 		resp.Diagnostics.AddError("Failed to assign agent skills", err.Error())
+		return
+	}
+	if err := r.client.SetAgentHooks(ctx, created.ID, hookIDs); err != nil {
+		r.rollbackCreatedAgent(ctx, created.ID)
+		resp.Diagnostics.AddError("Failed to assign agent hooks", err.Error())
 		return
 	}
 	if !config.CustomEnv.IsNull() && !config.CustomEnv.IsUnknown() {
@@ -164,15 +182,15 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 func (r *agentResource) rollbackCreatedAgent(ctx context.Context, id string) {
 	// Terraform will retry a failed create. Best-effort archival prevents a
 	// partially-created agent from becoming an unmanaged workspace object when
-	// a follow-up skills/env/archive call fails.
+	// a follow-up skills/hooks/env/archive call fails.
 	_ = r.client.ArchiveAgent(ctx, id)
 }
 
 func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// Terraform supplies a null plan when a state-only resource is being
-	// destroyed because its declaration was removed from configuration. There
-	// is no content hash to compute in that case.
-	if req.Plan.Raw.IsNull() {
+	// Dynamic values can have different cty shapes while rendering as the
+	// same JSON. When the declaration hash is unchanged, retain the exact
+	// prior state value so Terraform does not manufacture an in-place update.
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
 		return
 	}
 	var plan agentResourceModel
@@ -185,8 +203,15 @@ func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 		resp.Diagnostics.AddError("Failed to hash agent declaration", err.Error())
 		return
 	}
-	plan.ContentHash = types.StringValue(hash)
-	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+	var state agentResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !state.ContentHash.IsNull() && !state.ContentHash.IsUnknown() && state.ContentHash.ValueString() == hash {
+		resp.Plan.Raw = req.State.Raw
+		resp.Plan.Schema = req.State.Schema
+	}
 }
 
 func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -234,7 +259,7 @@ func (r *agentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("Invalid agent config", err.Error())
 		return
 	}
-	body, skillIDs, err := r.requestBody(ctx, config)
+	body, skillIDs, hookIDs, err := r.requestBody(ctx, config)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid agent config", err.Error())
 		return
@@ -251,6 +276,10 @@ func (r *agentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 	if err := r.client.SetAgentSkills(ctx, state.ID.ValueString(), skillIDs); err != nil {
 		resp.Diagnostics.AddError("Failed to update agent skills", err.Error())
+		return
+	}
+	if err := r.client.SetAgentHooks(ctx, state.ID.ValueString(), hookIDs); err != nil {
+		resp.Diagnostics.AddError("Failed to update agent hooks", err.Error())
 		return
 	}
 	if !config.CustomEnv.IsNull() && !config.CustomEnv.IsUnknown() {
@@ -340,10 +369,10 @@ func validateAgentConfig(config agentConfigModel) error {
 	return nil
 }
 
-func (r *agentResource) requestBody(ctx context.Context, config agentConfigModel) (map[string]any, []string, error) {
+func (r *agentResource) requestBody(ctx context.Context, config agentConfigModel) (map[string]any, []string, []string, error) {
 	runtimeID, err := r.resolveRuntime(ctx, config.Runtime)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	body := map[string]any{
 		"name":       config.Name.ValueString(),
@@ -359,14 +388,14 @@ func (r *agentResource) requestBody(ctx context.Context, config agentConfigModel
 	if !config.RuntimeConfig.IsNull() && !config.RuntimeConfig.IsUnknown() {
 		var value any
 		if err := json.Unmarshal([]byte(config.RuntimeConfig.ValueString()), &value); err != nil {
-			return nil, nil, fmt.Errorf("config.runtime_config must be valid JSON: %w", err)
+			return nil, nil, nil, fmt.Errorf("config.runtime_config must be valid JSON: %w", err)
 		}
 		body["runtime_config"] = value
 	}
 	if !config.MCPConfig.IsNull() && !config.MCPConfig.IsUnknown() {
 		var value any
 		if err := json.Unmarshal([]byte(config.MCPConfig.ValueString()), &value); err != nil {
-			return nil, nil, fmt.Errorf("config.mcp_config must be valid JSON: %w", err)
+			return nil, nil, nil, fmt.Errorf("config.mcp_config must be valid JSON: %w", err)
 		}
 		body["mcp_config"] = value
 	}
@@ -376,13 +405,13 @@ func (r *agentResource) requestBody(ctx context.Context, config agentConfigModel
 	if !config.CustomArgs.IsNull() && !config.CustomArgs.IsUnknown() {
 		var args []string
 		if diags := config.CustomArgs.ElementsAs(ctx, &args, false); diags.HasError() {
-			return nil, nil, fmt.Errorf("config.custom_args: %v", diags)
+			return nil, nil, nil, fmt.Errorf("config.custom_args: %v", diags)
 		}
 		body["custom_args"] = args
 	}
 	targets, err := invocationTargets(ctx, config.InvocationTargets)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if targets != nil {
 		body["invocation_targets"] = targets
@@ -390,12 +419,16 @@ func (r *agentResource) requestBody(ctx context.Context, config agentConfigModel
 	if !config.ComposioToolkitAllowlist.IsNull() && !config.ComposioToolkitAllowlist.IsUnknown() {
 		var allowlist []string
 		if diags := config.ComposioToolkitAllowlist.ElementsAs(ctx, &allowlist, false); diags.HasError() {
-			return nil, nil, fmt.Errorf("config.composioToolkitAllowlist: %v", diags)
+			return nil, nil, nil, fmt.Errorf("config.composioToolkitAllowlist: %v", diags)
 		}
 		body["composio_toolkit_allowlist"] = allowlist
 	}
 	ids, err := r.resolveSkills(ctx, config.Skills)
-	return body, ids, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	hookIDs, err := r.resolveHooks(ctx, config.Hooks)
+	return body, ids, hookIDs, err
 }
 
 func (r *agentResource) resolveRuntime(ctx context.Context, selector runtimeSelectorModel) (string, error) {
@@ -477,6 +510,42 @@ func (r *agentResource) resolveSkills(ctx context.Context, values types.Set) ([]
 	return ids, nil
 }
 
+func (r *agentResource) resolveHooks(ctx context.Context, values types.Set) ([]string, error) {
+	if values.IsNull() || values.IsUnknown() {
+		return []string{}, nil
+	}
+	var refs []string
+	if diags := values.ElementsAs(ctx, &refs, false); diags.HasError() {
+		return nil, fmt.Errorf("config.hooks: %v", diags)
+	}
+	if len(refs) == 0 {
+		return []string{}, nil
+	}
+	hooks, err := r.client.ListHooks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list hooks: %w", err)
+	}
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		found := ""
+		for _, hook := range hooks {
+			if hookReferenceMatches(ref, hook) {
+				found = hook.ID
+				break
+			}
+		}
+		if found == "" {
+			return nil, fmt.Errorf("hook %q was not found in the workspace", ref)
+		}
+		ids = append(ids, found)
+	}
+	return ids, nil
+}
+
+func hookReferenceMatches(reference string, hook client.Hook) bool {
+	return hook.ID == reference || hook.Name == reference
+}
+
 func skillReferenceMatches(reference string, skill client.Skill) bool {
 	return skill.ID == reference || skill.Name == reference ||
 		normalizeSkillReference(skillSourceURL(skill)) == normalizeSkillReference(reference)
@@ -534,6 +603,9 @@ func stateConfigFromAgent(current agentConfigModel, agent client.Agent) agentCon
 	if current.Skills.IsNull() || current.Skills.IsUnknown() {
 		current.Skills = stringSetValue(skillNames(agent.Skills))
 	}
+	if current.Hooks.IsNull() || current.Hooks.IsUnknown() {
+		current.Hooks = stringSetValue(hookNames(agent.Hooks))
+	}
 	current.InvocationTargets = invocationTargetValue(agent.InvocationTargets)
 	if !agent.ComposioAllowlistRedacted {
 		current.ComposioToolkitAllowlist = stringSetValue(agent.ComposioAllowlist)
@@ -552,6 +624,51 @@ func skillNames(skills []client.Skill) []string {
 			result = append(result, skill.Name)
 		} else {
 			result = append(result, skill.ID)
+		}
+	}
+	return result
+}
+
+func hookNames(hooks []client.Hook) []string {
+	result := make([]string, 0, len(hooks))
+	for _, hook := range hooks {
+		if hook.Name != "" {
+			result = append(result, hook.Name)
+		} else {
+			result = append(result, hook.ID)
+		}
+	}
+	return result
+}
+
+func preserveHookRefs(configured any, hooks []client.Hook) []string {
+	refs, _ := configured.([]any)
+	result := make([]string, 0, len(hooks))
+	matched := make(map[int]bool, len(hooks))
+	for _, raw := range refs {
+		ref, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		for index, hook := range hooks {
+			if matched[index] {
+				continue
+			}
+			if hookReferenceMatches(ref, hook) {
+				result = append(result, ref)
+				matched[index] = true
+				break
+			}
+		}
+	}
+	for index, hook := range hooks {
+		if matched[index] {
+			continue
+		}
+		if hook.Name != "" {
+			result = append(result, hook.Name)
+		} else if hook.ID != "" {
+			result = append(result, hook.ID)
 		}
 	}
 	return result

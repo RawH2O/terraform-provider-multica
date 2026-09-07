@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/xiehengjian/terraform-provider-multica/internal/client"
 )
@@ -25,13 +27,21 @@ type configResourceModel struct {
 
 func configResourceSchema(description string) schema.Schema {
 	return schema.Schema{Attributes: map[string]schema.Attribute{
-		"id": schema.StringAttribute{Computed: true},
+		"id": schema.StringAttribute{
+			Computed: true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
+			},
+		},
 		"config": schema.DynamicAttribute{
 			Required:    true,
 			Description: description,
 		},
 		"content_hash": schema.StringAttribute{
-			Computed:    true,
+			Computed: true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
+			},
 			Description: "Hash of the declarative configuration and referenced files.",
 		},
 	}}
@@ -42,7 +52,6 @@ func configResourceSchema(description string) schema.Schema {
 
 var _ resource.Resource = (*squadResource)(nil)
 var _ resource.ResourceWithConfigure = (*squadResource)(nil)
-var _ resource.ResourceWithModifyPlan = (*squadResource)(nil)
 
 type squadResource struct{ client *client.Client }
 
@@ -192,10 +201,6 @@ func (r *squadResource) ImportState(ctx context.Context, req resource.ImportStat
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-func (r *squadResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	setConfigContentHash(ctx, req, resp)
-}
-
 func (r *squadResource) squadBody(ctx context.Context, config map[string]any) (map[string]any, string, error) {
 	name := stringFieldDefault(config, "name", "")
 	if name == "" {
@@ -314,7 +319,6 @@ func removeSquadMember(ctx context.Context, c *client.Client, squadID, memberTyp
 
 var _ resource.Resource = (*autopilotResource)(nil)
 var _ resource.ResourceWithConfigure = (*autopilotResource)(nil)
-var _ resource.ResourceWithModifyPlan = (*autopilotResource)(nil)
 
 type autopilotResource struct{ client *client.Client }
 
@@ -452,10 +456,6 @@ func (r *autopilotResource) Delete(ctx context.Context, req resource.DeleteReque
 
 func (r *autopilotResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-func (r *autopilotResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	setConfigContentHash(ctx, req, resp)
 }
 
 func (r *autopilotResource) autopilotBody(ctx context.Context, config map[string]any) (map[string]any, error) {
@@ -641,26 +641,6 @@ func canonicalAutopilotConfig(detail map[string]any) map[string]any {
 		result["triggers"] = mapListToAny(triggers)
 	}
 	return result
-}
-
-func setConfigContentHash(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// A resource imported into state but removed from Git has a null destroy
-	// plan. Do not decode that null object into the config model.
-	if req.Plan.Raw.IsNull() {
-		return
-	}
-	var plan configResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() || plan.Config.IsNull() || plan.Config.IsUnknown() {
-		return
-	}
-	hash, err := declarativeContentHash(plan.Config)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to hash declarative configuration", err.Error())
-		return
-	}
-	plan.ContentHash = types.StringValue(hash)
-	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func configMap(value types.Dynamic) (map[string]any, error) {
