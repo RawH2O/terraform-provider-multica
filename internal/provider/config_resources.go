@@ -52,6 +52,7 @@ func configResourceSchema(description string) schema.Schema {
 
 var _ resource.Resource = (*squadResource)(nil)
 var _ resource.ResourceWithConfigure = (*squadResource)(nil)
+var _ resource.ResourceWithModifyPlan = (*squadResource)(nil)
 
 type squadResource struct{ client *client.Client }
 
@@ -201,6 +202,10 @@ func (r *squadResource) ImportState(ctx context.Context, req resource.ImportStat
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
+func (r *squadResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	setConfigContentHash(ctx, req, resp)
+}
+
 func (r *squadResource) squadBody(ctx context.Context, config map[string]any) (map[string]any, string, error) {
 	name := stringFieldDefault(config, "name", "")
 	if name == "" {
@@ -319,6 +324,7 @@ func removeSquadMember(ctx context.Context, c *client.Client, squadID, memberTyp
 
 var _ resource.Resource = (*autopilotResource)(nil)
 var _ resource.ResourceWithConfigure = (*autopilotResource)(nil)
+var _ resource.ResourceWithModifyPlan = (*autopilotResource)(nil)
 
 type autopilotResource struct{ client *client.Client }
 
@@ -456,6 +462,10 @@ func (r *autopilotResource) Delete(ctx context.Context, req resource.DeleteReque
 
 func (r *autopilotResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *autopilotResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	setConfigContentHash(ctx, req, resp)
 }
 
 func (r *autopilotResource) autopilotBody(ctx context.Context, config map[string]any) (map[string]any, error) {
@@ -641,6 +651,35 @@ func canonicalAutopilotConfig(detail map[string]any) map[string]any {
 		result["triggers"] = mapListToAny(triggers)
 	}
 	return result
+}
+
+func setConfigContentHash(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan configResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() || plan.Config.IsNull() || plan.Config.IsUnknown() {
+		return
+	}
+	hash, err := declarativeContentHash(plan.Config)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to hash declarative configuration", err.Error())
+		return
+	}
+	if !req.State.Raw.IsNull() {
+		var state configResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if !state.ContentHash.IsNull() && !state.ContentHash.IsUnknown() && state.ContentHash.ValueString() == hash {
+			resp.Plan.Raw = req.State.Raw
+			resp.Plan.Schema = req.State.Schema
+			return
+		}
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringValue(hash))...)
 }
 
 func configMap(value types.Dynamic) (map[string]any, error) {

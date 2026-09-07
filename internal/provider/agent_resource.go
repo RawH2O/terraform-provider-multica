@@ -211,7 +211,12 @@ func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 	if !state.ContentHash.IsNull() && !state.ContentHash.IsUnknown() && state.ContentHash.ValueString() == hash {
 		resp.Plan.Raw = req.State.Raw
 		resp.Plan.Schema = req.State.Schema
+		return
 	}
+	// Update writes this same hash into state. Publishing it for a real
+	// configuration change keeps Terraform's post-apply consistency check
+	// aligned with the value returned by Update.
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringValue(hash))...)
 }
 
 func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
