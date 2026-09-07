@@ -12,6 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/xiehengjian/terraform-provider-multica/internal/client"
 )
@@ -79,6 +81,9 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			// Dynamic is intentional: multica-declarative has compact and
 			// expanded union forms (model, skills, permission), plus arbitrary
@@ -191,8 +196,7 @@ func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 		resp.Diagnostics.AddError("Failed to hash agent declaration", err.Error())
 		return
 	}
-	plan.ContentHash = types.StringValue(hash)
-	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringValue(hash))...)
 }
 
 func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

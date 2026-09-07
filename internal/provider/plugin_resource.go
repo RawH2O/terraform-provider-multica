@@ -20,6 +20,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/xiehengjian/terraform-provider-multica/internal/client"
 )
@@ -71,7 +73,12 @@ func (r *pluginResource) Metadata(_ context.Context, req resource.MetadataReques
 func (r *pluginResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{Computed: true},
+			"id": schema.StringAttribute{
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"package_dir": schema.StringAttribute{
 				Optional:    true,
 				Description: "Directory containing multica.plugin.json and its referenced plugin files.",
@@ -152,7 +159,12 @@ func (r *pluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		resp.Diagnostics.AddAttributeError(path.Root("granted_scopes"), "Invalid Multica plugin scopes", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("plugin_key"), plan.PluginKey)...)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("version"), plan.Version)...)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), plan.ContentHash)...)
+	if !plan.GrantedScopes.IsNull() && !plan.GrantedScopes.IsUnknown() {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("granted_scopes"), plan.GrantedScopes)...)
+	}
 }
 
 func (r *pluginResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

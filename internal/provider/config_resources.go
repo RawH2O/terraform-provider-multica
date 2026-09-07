@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/xiehengjian/terraform-provider-multica/internal/client"
 )
@@ -25,7 +27,12 @@ type configResourceModel struct {
 
 func configResourceSchema(description string) schema.Schema {
 	return schema.Schema{Attributes: map[string]schema.Attribute{
-		"id": schema.StringAttribute{Computed: true},
+		"id": schema.StringAttribute{
+			Computed: true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
+			},
+		},
 		"config": schema.DynamicAttribute{
 			Required:    true,
 			Description: description,
@@ -659,8 +666,7 @@ func setConfigContentHash(ctx context.Context, req resource.ModifyPlanRequest, r
 		resp.Diagnostics.AddError("Failed to hash declarative configuration", err.Error())
 		return
 	}
-	plan.ContentHash = types.StringValue(hash)
-	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringValue(hash))...)
 }
 
 func configMap(value types.Dynamic) (map[string]any, error) {

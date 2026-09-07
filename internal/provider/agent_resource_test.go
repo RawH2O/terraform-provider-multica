@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/xiehengjian/terraform-provider-multica/internal/client"
 )
@@ -52,6 +54,38 @@ func TestIsArchivedAgentError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isArchivedAgentError(tt.err); got != tt.want {
 				t.Fatalf("isArchivedAgentError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagedResourceIDsReusePriorStateDuringPlan(t *testing.T) {
+	resources := []struct {
+		name   string
+		impl   resource.Resource
+		schema func(context.Context, resource.SchemaRequest, *resource.SchemaResponse)
+	}{
+		{name: "agent", impl: &agentResource{}, schema: (&agentResource{}).Schema},
+		{name: "skill", impl: &skillResource{}, schema: (&skillResource{}).Schema},
+		{name: "hook", impl: &hookResource{}, schema: (&hookResource{}).Schema},
+		{name: "squad", impl: &squadResource{}, schema: (&squadResource{}).Schema},
+		{name: "autopilot", impl: &autopilotResource{}, schema: (&autopilotResource{}).Schema},
+		{name: "plugin", impl: &pluginResource{}, schema: (&pluginResource{}).Schema},
+	}
+
+	for _, test := range resources {
+		t.Run(test.name, func(t *testing.T) {
+			response := resource.SchemaResponse{}
+			test.schema(context.Background(), resource.SchemaRequest{}, &response)
+			if response.Diagnostics.HasError() {
+				t.Fatalf("schema diagnostics = %v", response.Diagnostics)
+			}
+			id, ok := response.Schema.Attributes["id"].(schema.StringAttribute)
+			if !ok {
+				t.Fatalf("id schema has type %T, want schema.StringAttribute", response.Schema.Attributes["id"])
+			}
+			if len(id.PlanModifiers) != 1 {
+				t.Fatalf("id plan modifiers = %d, want one state-preserving modifier", len(id.PlanModifiers))
 			}
 		})
 	}
