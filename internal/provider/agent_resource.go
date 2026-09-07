@@ -20,7 +20,6 @@ import (
 
 var _ resource.Resource = (*agentResource)(nil)
 var _ resource.ResourceWithConfigure = (*agentResource)(nil)
-var _ resource.ResourceWithModifyPlan = (*agentResource)(nil)
 
 func newAgentResource() resource.Resource {
 	return &agentResource{}
@@ -180,36 +179,6 @@ func (r *agentResource) rollbackCreatedAgent(ctx context.Context, id string) {
 	// partially-created agent from becoming an unmanaged workspace object when
 	// a follow-up skills/hooks/env/archive call fails.
 	_ = r.client.ArchiveAgent(ctx, id)
-}
-
-func (r *agentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// Terraform supplies a null plan when a state-only resource is being
-	// destroyed because its declaration was removed from configuration. There
-	// is no content hash to compute in that case.
-	if req.Plan.Raw.IsNull() {
-		return
-	}
-	var plan agentResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() || plan.Config.IsNull() || plan.Config.IsUnknown() {
-		return
-	}
-	hash, err := declarativeContentHash(plan.Config)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to hash agent declaration", err.Error())
-		return
-	}
-	if !req.State.Raw.IsNull() {
-		var state agentResourceModel
-		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if !state.ContentHash.IsNull() && !state.ContentHash.IsUnknown() && state.ContentHash.ValueString() == hash {
-			return
-		}
-	}
-	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), types.StringValue(hash))...)
 }
 
 func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

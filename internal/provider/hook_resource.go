@@ -74,6 +74,7 @@ func (r *hookResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			},
 			"config": schema.DynamicAttribute{
 				Optional:    true,
+				Computed:    true,
 				Description: "Optional runner-specific hook configuration.",
 			},
 		},

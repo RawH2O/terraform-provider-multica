@@ -28,7 +28,6 @@ import (
 
 var _ resource.Resource = (*pluginResource)(nil)
 var _ resource.ResourceWithConfigure = (*pluginResource)(nil)
-var _ resource.ResourceWithModifyPlan = (*pluginResource)(nil)
 
 func newPluginResource() resource.Resource { return &pluginResource{} }
 
@@ -145,55 +144,6 @@ func (r *pluginResource) Configure(_ context.Context, req resource.ConfigureRequ
 		return
 	}
 	r.client = c
-}
-
-func (r *pluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.Plan.Raw.IsNull() {
-		return
-	}
-	var plan pluginResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() || plan.PackageDir.IsNull() || plan.PackageDir.IsUnknown() || plan.PackageDir.ValueString() == "" {
-		return
-	}
-
-	bundle, err := readPluginBundleWithManifest(plan.PackageDir.ValueString(), stringValueOrEmpty(plan.Manifest))
-	if err != nil {
-		resp.Diagnostics.AddAttributeError(path.Root("package_dir"), "Invalid Multica plugin package", err.Error())
-		return
-	}
-	plan.PluginKey = types.StringValue(bundle.manifest.Key)
-	plan.Version = types.StringValue(bundle.manifest.Version)
-	plan.ContentHash = types.StringValue(bundle.contentHash)
-	if plan.GrantedScopes.IsNull() || plan.GrantedScopes.IsUnknown() {
-		plan.GrantedScopes = stringSetValue(bundle.manifest.Scopes)
-	} else if _, err := plannedPluginScopes(ctx, plan, bundle.manifest); err != nil {
-		resp.Diagnostics.AddAttributeError(path.Root("granted_scopes"), "Invalid Multica plugin scopes", err.Error())
-		return
-	}
-	if req.State.Raw.IsNull() {
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("plugin_key"), plan.PluginKey)...)
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("version"), plan.Version)...)
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), plan.ContentHash)...)
-	} else {
-		var state pluginResourceModel
-		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if state.PluginKey.IsNull() || state.PluginKey.IsUnknown() || state.PluginKey.ValueString() != plan.PluginKey.ValueString() {
-			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("plugin_key"), plan.PluginKey)...)
-		}
-		if state.Version.IsNull() || state.Version.IsUnknown() || state.Version.ValueString() != plan.Version.ValueString() {
-			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("version"), plan.Version)...)
-		}
-		if state.ContentHash.IsNull() || state.ContentHash.IsUnknown() || state.ContentHash.ValueString() != plan.ContentHash.ValueString() {
-			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), plan.ContentHash)...)
-		}
-	}
-	if !plan.GrantedScopes.IsNull() && !plan.GrantedScopes.IsUnknown() {
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("granted_scopes"), plan.GrantedScopes)...)
-	}
 }
 
 func (r *pluginResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

@@ -65,6 +65,7 @@ func (r *skillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"config": schema.DynamicAttribute{
 				Optional:    true,
+				Computed:    true,
 				Description: "Arbitrary skill metadata, including import provenance.",
 			},
 			"files": schema.SetNestedAttribute{
